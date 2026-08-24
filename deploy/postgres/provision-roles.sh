@@ -212,8 +212,10 @@ ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_role" IN SCHEMA public
 ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_role"
   REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 
-ALTER ROLE :"migrator_role" SET search_path = pg_catalog, public;
-ALTER ROLE :"runtime_role" SET search_path = pg_catalog, public;
+-- pg_catalog remains implicitly first for name resolution when it is omitted;
+-- public is then the first explicit schema and therefore the safe DDL target.
+ALTER ROLE :"migrator_role" SET search_path = public;
+ALTER ROLE :"runtime_role" SET search_path = public;
 ALTER ROLE :"runtime_role" SET statement_timeout = '30s';
 ALTER ROLE :"runtime_role" SET lock_timeout = '5s';
 ALTER ROLE :"runtime_role" SET idle_in_transaction_session_timeout = '15s';
