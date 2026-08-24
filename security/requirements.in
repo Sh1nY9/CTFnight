@@ -1,0 +1,2 @@
+# Tooling used only by scripts/security-scan.sh and CI.
+pip-audit==2.10.1

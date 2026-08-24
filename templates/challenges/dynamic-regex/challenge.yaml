@@ -1,0 +1,23 @@
+event_slug: ctfnight
+slug: dynamic-regex-example
+title: Dynamic Regex Example
+category: Misc
+description_md: |
+  # 동적 점수와 정규식 flag 예제
+
+  solve 수에 따라 점수가 감소하는 문제 정의 예제입니다. 정규식은 전체 문자열을
+  명시적으로 고정하고 입력 길이 제한을 유지해야 합니다.
+connection_info: "nc challenge.example.invalid 31337"
+scoring:
+  type: dynamic
+  initial: 500
+  minimum: 100
+  decay: 20
+max_attempts: 50
+visible: false
+visible_at: null
+flag:
+  type: regex
+  value: '^FLAG\{[a-f0-9]{32}\}$'
+prerequisites:
+  - welcome

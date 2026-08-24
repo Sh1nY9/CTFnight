@@ -1,0 +1,21 @@
+event_slug: ctfnight
+slug: welcome
+title: Welcome to CTFnight
+category: Misc
+description_md: |
+  # Welcome
+
+  CTFnight의 첫 문제입니다. 규칙을 읽었다면 아래 데모 flag를 제출하세요.
+
+  이 파일의 flag는 공개 예제이므로 실제 대회에서는 반드시 교체해야 합니다.
+connection_info: null
+scoring:
+  type: fixed
+  initial: 100
+max_attempts: 0
+visible: true
+visible_at: null
+flag:
+  type: exact
+  value: FLAG{replace_this_demo_flag}
+prerequisites: []

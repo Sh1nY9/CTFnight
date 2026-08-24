@@ -1,0 +1,324 @@
+name: ${ALPHA_COMPOSE_PROJECT_NAME:-alpha}
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-service-defaults: &service-defaults
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  logging: *default-logging
+
+services:
+  postgres:
+    <<: *service-defaults
+    platform: linux/amd64
+    user: "65532:65532"
+    image: ${POSTGRES_IMAGE:-cgr.dev/chainguard/postgres:latest@sha256:41a02d9c35a8dc6cac36188a0a201528ea8d686bb238af595867252821f609b9}
+    environment:
+      POSTGRES_DB: ${ALPHA_POSTGRES_DB:-alpha}
+      POSTGRES_USER: ${ALPHA_POSTGRES_OWNER_USER:-alpha}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_owner_password
+    secrets:
+      - postgres_owner_password
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777,uid=65532,gid=65532
+      - /var/run/postgresql:size=4m,mode=0700,uid=65532,gid=65532
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    networks:
+      - database
+
+  db-roles:
+    <<: *service-defaults
+    platform: linux/amd64
+    user: "65532:65532"
+    image: ${POSTGRES_IMAGE:-cgr.dev/chainguard/postgres:latest@sha256:41a02d9c35a8dc6cac36188a0a201528ea8d686bb238af595867252821f609b9}
+    restart: "no"
+    entrypoint:
+      - /bin/sh
+      - /usr/local/bin/provision-roles.sh
+    environment:
+      ALPHA_POSTGRES_DB: ${ALPHA_POSTGRES_DB:-alpha}
+      ALPHA_POSTGRES_OWNER_USER: ${ALPHA_POSTGRES_OWNER_USER:-alpha}
+      ALPHA_POSTGRES_MIGRATOR_USER: ${ALPHA_POSTGRES_MIGRATOR_USER:-alpha_migrator}
+      ALPHA_POSTGRES_RUNTIME_USER: ${ALPHA_POSTGRES_RUNTIME_USER:-alpha_app}
+    secrets:
+      - postgres_owner_password
+      - postgres_migrator_password
+      - postgres_runtime_password
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=4m,mode=0700,uid=65532,gid=65532
+    cap_drop:
+      - ALL
+    volumes:
+      - ./deploy/postgres/provision-roles.sh:/usr/local/bin/provision-roles.sh:ro
+    networks:
+      - database
+
+  redis:
+    <<: *service-defaults
+    platform: linux/amd64
+    user: "65532:65532"
+    image: ${REDIS_IMAGE:-cgr.dev/chainguard/redis:latest@sha256:f639a439f5ab4f14486d6c6404f388b9dc076a25f85c6939630f2f805dfad969}
+    entrypoint:
+      - /bin/sh
+      - -ec
+    command:
+      - |
+        umask 077
+        {
+          printf '%s\n' 'appendonly yes' 'save 60 1'
+          printf 'requirepass '
+          cat /run/secrets/redis_password
+          printf '\n'
+        } > /tmp/redis.conf
+        exec /usr/bin/redis-server /tmp/redis.conf
+    secrets:
+      - redis_password
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$(cat /run/secrets/redis_password) redis-cli --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    volumes:
+      - redis_data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,mode=0700,uid=65532,gid=65532
+    cap_drop:
+      - ALL
+    networks:
+      - cache
+
+  migrate:
+    <<: *service-defaults
+    platform: linux/amd64
+    user: "65532:65532"
+    image: ${ALPHA_COMPOSE_PROJECT_NAME:-alpha}-backend
+    restart: "no"
+    entrypoint:
+      - /bin/sh
+      - -ec
+    command:
+      - |
+        alembic upgrade head
+        python -m alpha.cli bootstrap
+    environment:
+      ALPHA_DATABASE_HOST: postgres
+      ALPHA_DATABASE_PORT: 5432
+      ALPHA_DATABASE_NAME: ${ALPHA_POSTGRES_DB:-alpha}
+      ALPHA_DATABASE_USER: ${ALPHA_POSTGRES_MIGRATOR_USER:-alpha_migrator}
+      ALPHA_DATABASE_PASSWORD_FILE: /run/secrets/postgres_migrator_password
+      ALPHA_REDIS_HOST: redis
+      ALPHA_REDIS_PORT: 6379
+      ALPHA_REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      ALPHA_SECRET_KEY_FILE: /run/secrets/alpha_secret_key
+      ALPHA_ENVIRONMENT: ${ALPHA_ENVIRONMENT:-production}
+      ALPHA_COOKIE_SECURE: ${ALPHA_COOKIE_SECURE:-true}
+      ALPHA_ALLOWED_ORIGINS: ${ALPHA_ALLOWED_ORIGINS:-[]}
+      ALPHA_TRUSTED_HOSTS: ${ALPHA_TRUSTED_HOSTS:-[]}
+      ALPHA_ADMIN_EMAIL: ${ALPHA_ADMIN_EMAIL:-}
+      ALPHA_ADMIN_USERNAME: ${ALPHA_ADMIN_USERNAME:-admin}
+      ALPHA_ADMIN_PASSWORD_FILE: /run/secrets/admin_password
+      ALPHA_SEED_DEMO: ${ALPHA_SEED_DEMO:-false}
+    secrets:
+      - alpha_secret_key
+      - postgres_migrator_password
+      - redis_password
+      - admin_password
+    depends_on:
+      db-roles:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    networks:
+      - database
+
+  backend:
+    <<: *service-defaults
+    platform: linux/amd64
+    user: "65532:65532"
+    build:
+      context: ./backend
+    environment:
+      ALPHA_DATABASE_HOST: postgres
+      ALPHA_DATABASE_PORT: 5432
+      ALPHA_DATABASE_NAME: ${ALPHA_POSTGRES_DB:-alpha}
+      ALPHA_DATABASE_USER: ${ALPHA_POSTGRES_RUNTIME_USER:-alpha_app}
+      ALPHA_DATABASE_PASSWORD_FILE: /run/secrets/postgres_runtime_password
+      ALPHA_REDIS_HOST: redis
+      ALPHA_REDIS_PORT: 6379
+      ALPHA_REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      ALPHA_SECRET_KEY_FILE: /run/secrets/alpha_secret_key
+      ALPHA_ENVIRONMENT: ${ALPHA_ENVIRONMENT:-production}
+      ALPHA_COOKIE_SECURE: ${ALPHA_COOKIE_SECURE:-true}
+      ALPHA_ALLOWED_ORIGINS: ${ALPHA_ALLOWED_ORIGINS:-[]}
+      ALPHA_TRUSTED_HOSTS: ${ALPHA_TRUSTED_HOSTS:-[]}
+      # Backend has no published port. Trust only the Compose edge network path
+      # so Caddy's forwarded client address reaches rate limiting and audit logs.
+      ALPHA_FORWARDED_ALLOW_IPS: ${ALPHA_FORWARDED_ALLOW_IPS:-172.31.250.2}
+      ALPHA_SESSION_TTL_HOURS: ${ALPHA_SESSION_TTL_HOURS:-24}
+      ALPHA_SESSION_CLEANUP_BATCH_SIZE: ${ALPHA_SESSION_CLEANUP_BATCH_SIZE:-100}
+      ALPHA_CSRF_TTL_SECONDS: ${ALPHA_CSRF_TTL_SECONDS:-3600}
+      ALPHA_MAX_FLAG_LENGTH: ${ALPHA_MAX_FLAG_LENGTH:-512}
+    secrets:
+      - alpha_secret_key
+      - postgres_runtime_password
+      - redis_password
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/live', timeout=3)
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 45s
+    stop_grace_period: 30s
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    networks:
+      api:
+        ipv4_address: 172.31.250.3
+      database: {}
+      cache: {}
+
+  frontend:
+    <<: *service-defaults
+    platform: linux/amd64
+    user: "65532:65532"
+    build:
+      context: ./frontend
+    healthcheck:
+      test:
+        - CMD
+        - /usr/sbin/nginx
+        - -t
+        - -q
+        - -c
+        - /etc/nginx/nginx.conf
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777,uid=65532,gid=65532
+      - /run:size=1m,mode=0755,uid=65532,gid=65532
+      - /var/lib/nginx/tmp:size=16m,mode=0700,uid=65532,gid=65532
+    cap_drop:
+      - ALL
+    networks:
+      - web
+
+  caddy:
+    <<: *service-defaults
+    platform: linux/amd64
+    user: "65532:65532"
+    build:
+      context: ./deploy/caddy
+    environment:
+      ALPHA_SITE_ADDRESS: ${ALPHA_SITE_ADDRESS:-http://localhost}
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    ports:
+      - ${ALPHA_BIND_ADDRESS:-127.0.0.1}:${ALPHA_HTTP_PORT:-80}:80
+      - ${ALPHA_BIND_ADDRESS:-127.0.0.1}:${ALPHA_HTTPS_PORT:-443}:443
+      - ${ALPHA_BIND_ADDRESS:-127.0.0.1}:${ALPHA_HTTPS_PORT:-443}:443/udp
+    healthcheck:
+      test: ["CMD", "/usr/bin/caddy", "version"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    networks:
+      public:
+        # Ensure ACME and OCSP egress use the non-internal network.
+        gw_priority: 1
+      api:
+        ipv4_address: 172.31.250.2
+      web: {}
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+
+networks:
+  public:
+  api:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.31.250.0/24
+  web:
+    internal: true
+  database:
+    internal: true
+  cache:
+    internal: true
+
+secrets:
+  alpha_secret_key:
+    file: ./.secrets/alpha_secret_key
+  postgres_owner_password:
+    file: ./.secrets/postgres_owner_password
+  postgres_migrator_password:
+    file: ./.secrets/postgres_migrator_password
+  postgres_runtime_password:
+    file: ./.secrets/postgres_runtime_password
+  redis_password:
+    file: ./.secrets/redis_password
+  admin_password:
+    file: ./.secrets/admin_password

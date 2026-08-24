@@ -1,0 +1,82 @@
+{
+	admin off
+	persist_config off
+	servers {
+		max_header_size 32KB
+		timeouts {
+			read_body 15s
+			read_header 10s
+			write 30s
+			idle 2m
+		}
+	}
+}
+
+{$ALPHA_SITE_ADDRESS:http://localhost} {
+	request_body {
+		max_size 2MB
+	}
+
+	# Readiness performs live dependency I/O and is reserved for Caddy's direct
+	# backend active health check. Do not expose it as a public amplification
+	# endpoint; liveness remains public and intentionally performs no I/O.
+	@public_readiness path /api/v1/health/ready
+	handle @public_readiness {
+		respond 404
+	}
+
+	@api path /api/*
+	handle @api {
+		header {
+			Cache-Control "no-store, private"
+			Pragma "no-cache"
+			Expires "0"
+		}
+		reverse_proxy backend:8000 {
+			health_uri /api/v1/health/ready
+			health_interval 30s
+			health_timeout 5s
+			fail_duration 30s
+			transport http {
+				dial_timeout 3s
+				response_header_timeout 35s
+				read_timeout 40s
+				write_timeout 20s
+			}
+		}
+	}
+
+	handle {
+		# Compression is limited to public frontend assets. Authenticated API
+		# responses (including CSRF material) remain uncompressed to avoid
+		# compression side channels over TLS.
+		encode zstd gzip
+		reverse_proxy frontend:8080 {
+			transport http {
+				dial_timeout 3s
+				response_header_timeout 10s
+				read_timeout 15s
+				write_timeout 10s
+			}
+		}
+	}
+
+	header {
+		-X-Powered-By
+		-Server
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Strict-Transport-Security "max-age=31536000"
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Resource-Policy "same-origin"
+		X-Permitted-Cross-Domain-Policies "none"
+		Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; media-src 'self'"
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

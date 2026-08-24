@@ -1,0 +1,44 @@
+# Local deployment state and credentials
+.env
+.env.*
+!.env.example
+.secrets/
+backups/
+templates/.private/
+credentials.json
+*.key
+*.pem
+*.p12
+*.pfx
+*.token
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+.lock-venv/
+*.egg-info/
+*.db
+*.sqlite
+*.sqlite3
+.cache/
+
+# Node / frontend output
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+security-reports/
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.log

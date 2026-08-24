@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://ctfnight.local/security/vex/2026-08-24",
+  "author": "CTFnight security maintainers",
+  "timestamp": "2026-08-24T00:00:00+09:00",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "GO-2026-5932"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/golang.org/x/crypto@v0.54.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The finding applies only to golang.org/x/crypto/openpgp. The pinned Caddy build does not include that package in its compiled dependency graph; CI verifies this before applying this VEX statement."
+    }
+  ]
+}

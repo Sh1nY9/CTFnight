@@ -1,0 +1,243 @@
+name: Compose integration
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alpha-compose-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      ALPHA_TEST_POSTGRES_URL: postgresql+psycopg://alpha:ci-test-password@127.0.0.1:5432/alpha_test
+    services:
+      postgres:
+        image: cgr.dev/chainguard/postgres:latest@sha256:41a02d9c35a8dc6cac36188a0a201528ea8d686bb238af595867252821f609b9
+        env:
+          POSTGRES_DB: alpha_test
+          POSTGRES_USER: alpha
+          POSTGRES_PASSWORD: ci-test-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U alpha -d alpha_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Install host ACL prerequisite
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes acl
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: 3.12.14
+          cache: pip
+          cache-dependency-path: |
+            backend/pyproject.toml
+            backend/requirements-bootstrap.lock
+            backend/requirements-build.lock
+            backend/requirements-test.lock
+
+      - name: Install and test backend
+        run: |
+          python -m pip install --require-hashes -r backend/requirements-bootstrap.lock
+          python -m pip install --require-hashes -r backend/requirements-build.lock
+          python scripts/check-backend-locks.py
+          python -m pip install --require-hashes -r backend/requirements-test.lock
+          python -m pip wheel \
+            --no-deps \
+            --no-build-isolation \
+            --wheel-dir "$RUNNER_TEMP/alpha-wheel" \
+            ./backend
+          python -m pip install --no-deps "$RUNNER_TEMP"/alpha-wheel/*.whl
+          cd backend
+          ruff format --check src tests alembic
+          ruff check src tests alembic
+          pytest
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.23.2
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Typecheck and test frontend
+        run: |
+          npm --prefix frontend ci --ignore-scripts
+          npm --prefix frontend run typecheck
+          npm --prefix frontend test
+
+      - name: Check operator scripts
+        run: |
+          for script in scripts/*.sh; do sh -n "$script"; done
+          python scripts/validate-compose-security.py --self-test
+          python scripts/deployment-manifest.py --self-test
+          mkdir -p security-reports
+          chmod 0700 security-reports
+          exec 8<security-reports
+          flock -n 8
+          if (exec 9<security-reports; flock -n 9); then
+            echo 'directory-inode deployment lock가 concurrent process를 거부하지 않았습니다.' >&2
+            exit 1
+          fi
+          flock -u 8
+          exec 8<&-
+          python - <<'PY'
+          from pathlib import Path
+
+          scanner = Path("scripts/security-scan.sh").read_text(encoding="utf-8")
+          makefile = Path("Makefile").read_text(encoding="utf-8")
+          manifest = Path("scripts/deployment-manifest.py").read_text(encoding="utf-8")
+          canonical_build = "  build --pull backend frontend caddy"
+          invalidation = 'deployment-manifest.py" invalidate'
+          assert scanner.count(canonical_build) == 1, "canonical Compose final build must occur exactly once"
+          assert scanner.count(invalidation) == 1, "each new gate must revoke the older manifest once"
+          assert scanner.index(invalidation) < scanner.index(canonical_build), "manifest revocation must precede build"
+          assert makefile.count("up --detach --no-build") == 1, "deployment must start exactly once without build"
+          assert "up --build" not in makefile, "Make must never rebuild while starting"
+          up_block = makefile.split("up: config", 1)[1].split("\nbootstrap:", 1)[0]
+          assert "flock -n 9" in up_block and "--remove-orphans" in up_block, "start must hold the gate lock and remove orphans"
+          import_block = makefile.split("import-challenge:", 1)[1].split("\nci:", 1)[0]
+          assert import_block.index("flock -n 9") < import_block.index("verify-prestart") < import_block.index("$(COMPOSE) run"), "challenge import must lock and verify its image first"
+          recovery = Path("scripts/recover-admin-password.sh").read_text(encoding="utf-8")
+          recovery_run = '"$script_dir/compose.sh" run'
+          assert recovery.count("verify-prestart") == 2, "admin recovery needs early and immediate artifact checks"
+          assert recovery.rindex("verify-prestart") < recovery.index(recovery_run), "admin recovery must reverify immediately before run"
+          assert recovery.index("flock -n 9") < recovery.index("verify-prestart"), "admin recovery must hold the gate lock"
+          assert "--pull never" in import_block and "--pull never" in recovery, "one-off mutation must never pull after verification"
+          assert "MAX_MANIFEST_AGE = timedelta(hours=2)" in manifest, "manifest freshness must remain two hours"
+          PY
+          if TRIVY_SEVERITY=CRITICAL ./scripts/security-scan.sh >"$RUNNER_TEMP/trivy-override.out" 2>&1; then
+            echo 'Trivy environment override가 fail-closed로 거부되지 않았습니다.' >&2
+            exit 1
+          fi
+          grep -F 'TRIVY_* environment override' "$RUNNER_TEMP/trivy-override.out"
+          sh scripts/test-secret-acl.sh
+          sh scripts/test-backup-race.sh
+          sh scripts/test-database-role-upgrade.sh
+          make help
+
+  integration:
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Install host ACL prerequisite
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes acl
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: 3.12.14
+          cache: pip
+          cache-dependency-path: security/requirements.lock
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.23.2
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Generate isolated CI environment
+        env:
+          ALPHA_ADMIN_EMAIL: ci-admin@example.com
+        run: ./scripts/generate-env.sh
+
+      - name: Validate Compose configuration
+        run: make config
+
+      - name: Validate canonical graph and reject runtime overrides
+        run: |
+          ./scripts/compose.sh config --images > "$RUNNER_TEMP/ctfnight.images"
+          grep -Fx 'alpha-backend' "$RUNNER_TEMP/ctfnight.images"
+          grep -Fx 'alpha-frontend' "$RUNNER_TEMP/ctfnight.images"
+          if ALPHA_SITE_ADDRESS=attacker.example ./scripts/compose.sh config --quiet; then
+            echo 'runtime interpolation override가 거부되지 않았습니다.' >&2
+            exit 1
+          fi
+          if COMPOSE_FILE=untrusted.yaml ./scripts/compose.sh config --quiet; then
+            echo 'Compose graph override가 거부되지 않았습니다.' >&2
+            exit 1
+          fi
+          if ./scripts/compose.sh -f untrusted.yaml config --quiet; then
+            echo 'command-line Compose file override가 거부되지 않았습니다.' >&2
+            exit 1
+          fi
+          if ./scripts/compose.sh config --env-file .env.example --quiet; then
+            echo 'command-line env file override가 거부되지 않았습니다.' >&2
+            exit 1
+          fi
+          if ./scripts/compose.sh config --project-name attacker --quiet; then
+            echo 'command-line project override가 거부되지 않았습니다.' >&2
+            exit 1
+          fi
+
+      - name: Build and start
+        run: make up
+
+      - name: Verify deployment artifact binding
+        run: |
+          test "$(stat -c %a security-reports/deployment-manifest.json)" = 600
+          python scripts/deployment-manifest.py verify-running \
+            --manifest security-reports/deployment-manifest.json \
+            --app-root . \
+            --env-file .env
+
+      - name: Remove and reject obsolete project service containers
+        run: |
+          docker run --detach --pull=never \
+            --name alpha-orphan-regression \
+            --label com.docker.compose.project=alpha \
+            --label com.docker.compose.service=removed-service \
+            --label com.docker.compose.oneoff=False \
+            --entrypoint python \
+            alpha-backend \
+            -c 'import time; time.sleep(300)'
+          make up
+          if docker inspect alpha-orphan-regression >/dev/null 2>&1; then
+            echo 'obsolete Compose project service container가 제거되지 않았습니다.' >&2
+            exit 1
+          fi
+
+      - name: Verify runtime non-root secret access
+        run: |
+          ./scripts/compose.sh exec -T backend python -c \
+            'import os; from pathlib import Path; assert os.getuid() == 65532; expected={"alpha_secret_key","postgres_runtime_password","redis_password"}; actual={p.name for p in Path("/run/secrets").iterdir()}; assert actual == expected; [Path("/run/secrets", name).open("rb").close() for name in expected]'
+          ./scripts/compose.sh exec -T postgres sh -ec \
+            'test "$(id -u)" = 65532 && test -r /run/secrets/postgres_owner_password'
+          ./scripts/compose.sh exec -T redis sh -ec \
+            'test "$(id -u)" = 65532 && test -r /run/secrets/redis_password'
+
+      - name: Verify PostgreSQL runtime minimum privileges
+        run: ./scripts/verify-database-privileges.sh
+
+      - name: Smoke test
+        run: make smoke
+
+      - name: Show diagnostics on failure
+        if: failure()
+        run: test ! -f .env || ./scripts/compose.sh logs --no-color --tail=300
+
+      - name: Remove ephemeral CI state
+        if: always()
+        run: test ! -f .env || ./scripts/compose.sh down --volumes --remove-orphans
