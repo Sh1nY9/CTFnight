@@ -9,9 +9,12 @@
 이벤트 slug는 `ctfnight`다.
 
 현재 배포·scanner·CI의 검증 platform은 rootful Linux Docker x86_64이며 Compose의 모든
-서비스는 `linux/amd64`, UID/GID `65532:65532`로 고정한다. 다른 architecture는 별도
-build·CVE·동시성 회귀 검증 없이는 지원 범위로 간주하지 않는다. rootless Docker와 user
-namespace remap은 host UID mapping과 volume ownership 계약이 달라 현재 지원하지 않는다.
+서비스는 `linux/amd64`로 고정한다. application·edge·cache·one-shot은 UID/GID
+`65532:65532`다. PostgreSQL만 고정 Chainguard image의 초기화 계약에 따라 `0:0` entrypoint가
+exact capability로 volume을 준비한 뒤 server PID 1을 내장 `70:70`으로 낮춘다. 다른
+architecture는 별도 build·CVE·동시성 회귀 검증 없이는 지원 범위로 간주하지 않는다.
+rootless Docker와 user namespace remap은 host UID mapping과 volume ownership 계약이 달라
+현재 지원하지 않는다.
 운영 host에는 Linux `util-linux`의 `flock`가 필요하다. scanner, `make up`, challenge import와
 관리자 복구는 `security-reports/` directory inode의 같은 비차단 `flock -n`을 사용한다.
 scanner는 전체 gate, `make up`은 최종 preverify→up→postverify, one-off는 preverify→DB
@@ -114,6 +117,10 @@ root key, runtime DB, Redis 세 파일만 요구하고, `migrate` one-shot만 mi
 admin 파일을 추가로 받는다. PostgreSQL owner secret은 postgres와 `db-roles`에만 간다. reader는
 최종 symlink가 아닌 일반 파일, UTF-8 한 줄, 최대 16 KiB만 허용한다. 운영 전 검증기는
 디렉터리·파일 권한과 placeholder도 확인하며 비밀값을 `.env`에 직접 둔 구성을 거부한다.
+
+PostgreSQL entrypoint는 초기 root와 exact capability로 owner secret을 읽고 volume을 UID 70에
+맞춘 뒤 권한을 낮춘다. 실행 중 DB PID 1은 UID 70이며 owner secret을 읽을 수 없다. 별도의
+`db-roles` one-shot은 UID 65532로 세 DB credential을 읽고 최소 권한 role을 구성한다.
 
 Compose file-source secret은 host access control을 유지한다. host owner에게 `rw-`, 고정
 container UID 65532에게 `r--`, group·other에는 아무 권한도 주지 않는 exact POSIX ACL로

@@ -8,9 +8,12 @@ backend 구현은 [backend/README.md](backend/README.md)를 함께 따른다.
 
 보안 수정은 현재 유지되는 source revision과 그 revision이 고정한 image·lock에 적용한다.
 검증된 runtime platform은 rootful Linux Docker x86_64(`linux/amd64`)이며 Compose의 모든
-서비스를 이 platform과 UID/GID `65532:65532`에 고정한다. 다른 architecture의 동작이나
-CVE 상태는 별도 검증 전에는 지원하지 않는다. rootless Docker와 user namespace remap은
-container UID 65532의 host mapping과 volume ownership이 달라 현재 지원·검증하지 않는다.
+서비스를 이 platform에 고정한다. application·edge·cache·one-shot은 UID/GID `65532:65532`다.
+PostgreSQL만 고정 image의 공식 초기화 계약에 따라 exact capability를 가진 `0:0` entrypoint가
+volume을 준비하고 server PID 1을 내장 `70:70`으로 낮춘다. CI가 실행 UID와 secret 비가독성을
+확인한다. 다른 architecture의 동작이나 CVE 상태는 별도 검증 전에는 지원하지 않는다.
+rootless Docker와 user namespace remap은 UID 65532·70 및 초기 root의 host mapping과 volume
+ownership이 달라 현재 지원·검증하지 않는다.
 오래된 fork, 임의로 바꾼 base image, 공개 edge를 우회한 backend/frontend port와 별도
 challenge workload는 이 기준의 보호 범위가 아니다.
 
@@ -96,6 +99,11 @@ host filesystem은 POSIX ACL을 지원해야 하고 운영 host에는 `acl` pack
 없음의 exact ACL을 사용한다. 수동 편집·교체·복구 뒤에는 `make secret-acl`로 기존 ACL을
 제거하고 이 계약을 재적용한 뒤 검증한다. target은 여섯 고정 파일, basename과 symlink·hard
 link도 확인하지만 credential 자체를 회전하지는 않는다.
+
+PostgreSQL의 초기 root entrypoint에는 owner secret과 named volume 준비에 필요한
+`CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETGID`, `SETUID`만 다시 부여한다. 준비가 끝나면 PID 1은
+UID/GID 70으로 실행되고 owner secret을 읽을 수 없다. 지속 실행되는 DB process에 root나
+owner credential 접근을 허용하는 예외가 아니다.
 
 초기 관리자가 비밀번호를 바꾸면 `admin_password` 파일을 삭제하지 말고 비운 뒤
 `ALPHA_ADMIN_BOOTSTRAPPED=true`로 표시하고 backend를 재생성한다. 일회성 복구 절차는

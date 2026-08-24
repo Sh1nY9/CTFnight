@@ -219,12 +219,12 @@ jobs:
             exit 1
           fi
 
-      - name: Verify runtime non-root secret access
+      - name: Verify runtime identities and secret access
         run: |
           ./scripts/compose.sh exec -T backend python -c \
             'import os; from pathlib import Path; assert os.getuid() == 65532; expected={"alpha_secret_key","postgres_runtime_password","redis_password"}; actual={p.name for p in Path("/run/secrets").iterdir()}; assert actual == expected; [Path("/run/secrets", name).open("rb").close() for name in expected]'
-          ./scripts/compose.sh exec -T postgres sh -ec \
-            'test "$(id -u)" = 65532 && test -r /run/secrets/postgres_owner_password'
+          ./scripts/compose.sh exec -T --user 70:70 postgres sh -ec \
+            'test "$(id -u):$(id -g)" = 70:70 && grep -Eq "^Uid:[[:space:]]+70[[:space:]]+70[[:space:]]+70[[:space:]]+70\$" /proc/1/status && grep -Eq "^Gid:[[:space:]]+70[[:space:]]+70[[:space:]]+70[[:space:]]+70\$" /proc/1/status && grep -Eq "^CapEff:[[:space:]]+0000000000000000\$" /proc/1/status && test ! -r /run/secrets/postgres_owner_password'
           ./scripts/compose.sh exec -T redis sh -ec \
             'test "$(id -u)" = 65532 && test -r /run/secrets/redis_password'
 

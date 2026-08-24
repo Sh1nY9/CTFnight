@@ -100,8 +100,10 @@ argument로도 전달되지 않는 운영 복구 상태다. deployment source di
 `true`/`false` marker 값만 `<operational-marker>`로 정규화하므로 복구 중 marker 전환은
 허용하지만, 그 밖의 `.env` drift는 그대로 거부한다.
 
-모든 Compose service는 UID/GID `65532:65532`다. rootful Linux Docker host의 POSIX ACL로
-secret owner에게 `rw-`, UID 65532에게 `r--`만 허용하며 `acl` package의 `setfacl`·`getfacl`이
+backend와 secret을 소비하는 application/one-shot Compose service는 UID/GID
+`65532:65532`다. PostgreSQL만 고정 image의 entrypoint가 제한된 root로 volume을 준비한 뒤
+server PID 1을 UID/GID `70:70`으로 낮춘다. rootful Linux Docker host의 POSIX ACL로 secret
+owner에게 `rw-`, UID 65532에게 `r--`만 허용하며 `acl` package의 `setfacl`·`getfacl`이
 필수다. 수동 교체나 backup 복구 뒤에는 상위 `make secret-acl`을 실행한다. rootless Docker의
 subordinate UID mapping은 이 계약과 달라 현재 지원하지 않으며 별도 read·volume 검증이
 필요하다.

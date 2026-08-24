@@ -16,7 +16,9 @@ services:
   postgres:
     <<: *service-defaults
     platform: linux/amd64
-    user: "65532:65532"
+    # The pinned Chainguard entrypoint starts with these narrowly allowlisted
+    # capabilities to prepare the volume, then execs postgres as UID/GID 70.
+    user: "0:0"
     image: ${POSTGRES_IMAGE:-cgr.dev/chainguard/postgres:latest@sha256:41a02d9c35a8dc6cac36188a0a201528ea8d686bb238af595867252821f609b9}
     environment:
       POSTGRES_DB: ${ALPHA_POSTGRES_DB:-alpha}
@@ -27,7 +29,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+        - exec gosu postgres pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
       interval: 5s
       timeout: 5s
       retries: 12
@@ -36,8 +38,8 @@ services:
       - postgres_data:/var/lib/postgresql/data
     read_only: true
     tmpfs:
-      - /tmp:size=16m,mode=1777,uid=65532,gid=65532
-      - /var/run/postgresql:size=4m,mode=0700,uid=65532,gid=65532
+      - /tmp:size=16m,mode=1777,uid=70,gid=70
+      - /var/run/postgresql:size=4m,mode=0700,uid=70,gid=70
     cap_drop:
       - ALL
     cap_add:

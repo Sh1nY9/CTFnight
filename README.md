@@ -42,11 +42,12 @@ Attack–Defense, 팀별 문제 컨테이너, attachment upload와 Kubernetes ru
 않았다면 AAAA를 게시하지 않는다. 공개 자동 TLS port를 다른 reverse proxy가 점유하면
 안 된다.
 
-모든 container는 UID/GID `65532:65532`로 고정된다. rootless Docker나 user namespace
-remap에서는 container UID 65532가 host의 다른 subordinate UID로 매핑되므로 현재 host ACL과
-scan 결과를 그대로 적용할 수 없다. 이 배포 방식은 아직 지원·검증하지 않았으며 사용하려면
-실제 UID mapping, file secret read, named volume 소유권, health와 전체 security gate를
-별도로 검증해야 한다.
+application·edge·cache와 one-shot container는 UID/GID `65532:65532`로 고정된다. 유일한
+예외인 고정 Chainguard PostgreSQL image는 공식 entrypoint 계약대로 exact capability를 가진
+UID/GID `0:0`에서 named volume을 준비한 뒤 server PID 1을 내장 `postgres` UID/GID `70:70`으로
+즉시 낮춘다. CI는 실행 중 PID 1의 real/effective/saved/filesystem UID가 모두 70인지 확인한다.
+rootless Docker나 user namespace remap에서는 UID 65532·70과 초기 root의 host mapping 및
+volume ownership 계약이 달라 현재 지원·검증하지 않는다.
 
 `scripts/security-scan.sh`, `make up`, `make import-challenge`와 관리자 복구 helper는 모두
 `security-reports/` directory inode의 같은 비차단 `flock -n`을 사용한다. scanner는 전체
@@ -136,6 +137,8 @@ ACME 계정은 `caddy_data` volume에 보존된다. edge는 HSTS, strict CSP, CO
 `.secrets/` 아래 여섯 파일에만 저장되고 Compose가 `/run/secrets/*`로 mount한다. 각 파일의
 POSIX ACL은 host owner `rw-`, container UID 65532 `r--`, group·other 없음으로 고정한다.
 `make init`은 이 ACL을 만들고 `make validate`는 `getfacl -cpn` 결과를 완전 일치로 검사한다.
+PostgreSQL owner secret은 초기 root entrypoint가 `DAC_OVERRIDE`로 읽고 UID 70으로 낮춘 뒤에는
+읽을 수 없으며, 이후 role provisioning은 UID 65532인 `db-roles` one-shot이 담당한다.
 
 | 파일 | 용도 |
 |---|---|
@@ -470,11 +473,11 @@ cd "$app_root"
 command -v cleanup_restore >/dev/null
 make backup BACKUP_DIR=/srv/ctfnight-pre-restore
 ./scripts/compose.sh stop caddy frontend backend
-./scripts/compose.sh exec -T postgres sh -ec \
+./scripts/compose.sh exec -T --user 70:70 postgres sh -ec \
   'dropdb --if-exists --username "$POSTGRES_USER" "$POSTGRES_DB"'
-./scripts/compose.sh exec -T postgres sh -ec \
+./scripts/compose.sh exec -T --user 70:70 postgres sh -ec \
   'createdb --username "$POSTGRES_USER" "$POSTGRES_DB"'
-./scripts/compose.sh exec -T postgres sh -ec \
+./scripts/compose.sh exec -T --user 70:70 postgres sh -ec \
   'pg_restore --exit-on-error --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --no-owner' \
   < "$restore_root/database.dump"
 make up

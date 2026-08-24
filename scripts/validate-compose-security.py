@@ -144,6 +144,10 @@ def validate_builds(services: Mapping[str, Any], app_root: pathlib.Path) -> None
 
 
 def validate_process_boundaries(services: Mapping[str, Any]) -> None:
+    expected_users = {name: "65532:65532" for name in EXPECTED_SERVICES}
+    # The pinned Chainguard PostgreSQL entrypoint must start as root to prepare
+    # its named volume and then drops to the built-in postgres UID/GID 70.
+    expected_users["postgres"] = "0:0"
     expected_read_only = {
         "backend": True,
         "caddy": True,
@@ -173,8 +177,8 @@ def validate_process_boundaries(services: Mapping[str, Any]) -> None:
         ],
         "migrate": ["/tmp:size=64m,mode=1777"],
         "postgres": [
-            "/tmp:size=16m,mode=1777,uid=65532,gid=65532",
-            "/var/run/postgresql:size=4m,mode=0700,uid=65532,gid=65532",
+            "/tmp:size=16m,mode=1777,uid=70,gid=70",
+            "/var/run/postgresql:size=4m,mode=0700,uid=70,gid=70",
         ],
         "redis": ["/tmp:size=8m,mode=0700,uid=65532,gid=65532"],
     }
@@ -213,7 +217,7 @@ def validate_process_boundaries(services: Mapping[str, Any]) -> None:
     for name in sorted(EXPECTED_SERVICES):
         service = require_mapping(services[name], f"services.{name}")
         require(service.get("platform") == "linux/amd64", f"{name} platform은 linux/amd64여야 합니다.")
-        require(service.get("user") == "65532:65532", f"{name} user는 65532:65532여야 합니다.")
+        require(service.get("user") == expected_users[name], f"{name} user가 canonical 값과 다릅니다.")
         require(service.get("privileged") in (None, False), f"{name} privileged 실행은 금지됩니다.")
         actual_read_only = service.get("read_only", False)
         require(
@@ -717,11 +721,12 @@ def canonical_fixture(app_root: pathlib.Path) -> tuple[dict[str, Any], dict[str,
         },
         "postgres": {
             **service_defaults,
+            "user": "0:0",
             "image": "postgres@example",
             "read_only": True,
             "tmpfs": [
-                "/tmp:size=16m,mode=1777,uid=65532,gid=65532",
-                "/var/run/postgresql:size=4m,mode=0700,uid=65532,gid=65532",
+                "/tmp:size=16m,mode=1777,uid=70,gid=70",
+                "/var/run/postgresql:size=4m,mode=0700,uid=70,gid=70",
             ],
             "cap_add": ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"],
             "networks": {"database": None},
@@ -793,6 +798,7 @@ def run_self_test() -> None:
         "read_only": lambda value: value["services"]["backend"].update(read_only=False),
         "cap_drop": lambda value: value["services"]["backend"].update(cap_drop=[]),
         "capability": lambda value: value["services"]["backend"].update(cap_add=["SYS_ADMIN"]),
+        "postgres_user": lambda value: value["services"]["postgres"].update(user="65532:65532"),
         "security_opt": lambda value: value["services"]["backend"].update(security_opt=["seccomp=unconfined"]),
         "tmpfs_unbounded": lambda value: value["services"]["backend"].update(tmpfs=["/tmp"]),
         "device_via_deploy": lambda value: value["services"]["backend"].update(

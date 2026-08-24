@@ -27,7 +27,7 @@ ALPHA_COMPOSE_PROJECT_NAME=alpha-backup-race \
 {
   printf '%s\n' '#!/bin/sh' 'set -eu'
   printf '%s\n' 'case " $* " in'
-  printf '%s\n' "  *' exec -T postgres '*)"
+  printf '%s\n' "  *' exec -T --user 70:70 postgres '*)"
   printf '%s\n' '    sleep 1'
   printf '%s\n' "    printf '%s\\n' 'synthetic pg_dump'"
   printf '%s\n' '    ;;'

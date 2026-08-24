@@ -90,7 +90,7 @@ tmp_dir=$(mktemp -d "$staging_root/ctfnight-backup.XXXXXX")
 mkdir -m 700 -- "$tmp_dir/secrets"
 
 cd "$app_root"
-"$script_dir/compose.sh" exec -T postgres sh -ec \
+"$script_dir/compose.sh" exec -T --user 70:70 postgres sh -ec \
   'pg_dump --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --format=custom --no-owner' \
   > "$tmp_dir/database.dump"
 
