@@ -84,8 +84,8 @@ psql_base() {
 }
 
 owner_state=$(psql_base --tuples-only --no-align --quiet \
-  --command='SELECT current_user || chr(58) || rolsuper FROM pg_roles WHERE rolname = current_user')
-[ "$owner_state" = "$owner_role:t" ] || \
+  --command="SELECT current_user || chr(58) || CASE WHEN rolsuper THEN '1' ELSE '0' END FROM pg_roles WHERE rolname = current_user")
+[ "$owner_state" = "$owner_role:1" ] || \
   fail 'bootstrap owner 연결이 superuser로 확인되지 않아 변경을 중단합니다.'
 
 psql_base \
