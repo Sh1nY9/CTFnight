@@ -11,7 +11,8 @@ RUN python -m pip install --require-hashes -r requirements-bootstrap.lock && \
 
 COPY pyproject.toml ./
 COPY src ./src
-RUN python -m pip wheel --no-deps --no-build-isolation --wheel-dir /wheels .
+RUN python -m pip wheel --no-deps --no-build-isolation --wheel-dir /wheels . && \
+    python -m pip uninstall --yes pip
 
 FROM python:3.12.14-alpine3.24@sha256:d09d15e60962ca365d1cd544a48773bac9d33f2fb1b00f2aa0deec78ade7dc31 AS runtime
 
