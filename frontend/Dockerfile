@@ -6,7 +6,7 @@ COPY --chown=65532:65532 tsconfig*.json vite.config.ts index.html ./
 COPY --chown=65532:65532 src ./src
 RUN npm run build
 
-FROM cgr.dev/chainguard/nginx:latest@sha256:b75e46f5101f5248c274ed1153b4fe9d9d3c25b2f4c22c0634d6c7394b25283d AS runtime
+FROM cgr.dev/chainguard/nginx:latest@sha256:df0a97604163fb49366d0853c34b238cde40122606f3c92940d47717689a0473 AS runtime
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY --from=build --chown=65532:65532 /app/dist /usr/share/nginx/html
 EXPOSE 8080
