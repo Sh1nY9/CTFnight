@@ -18,7 +18,7 @@ RUN module_dir="$(go list -m -f '{{.Dir}}' "github.com/caddyserver/caddy/v2@${CA
       -ldflags='-s -w -buildid=' \
       "github.com/caddyserver/caddy/v2/cmd/caddy@${CADDY_COMMIT}"
 
-FROM cgr.dev/chainguard/static:latest@sha256:f68e3a8244c7d0f4cd56635aaff8e6a533cf6cc3850d8fb339567a5782d6a0b0 AS runtime
+FROM cgr.dev/chainguard/static:latest@sha256:96d02f455d5a73b817c0602910748609cf8471b1cc9522f78c75cedb1f67d072 AS runtime
 
 ENV XDG_DATA_HOME=/data \
     XDG_CONFIG_HOME=/tmp/caddy-config
