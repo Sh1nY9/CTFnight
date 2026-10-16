@@ -1,4 +1,4 @@
-FROM cgr.dev/chainguard/go:latest-dev@sha256:017584bf9b817a44d8c8a9eb1ce1472753053e7accc6adfbfa81d4b077a27338 AS builder
+FROM cgr.dev/chainguard/go:latest-dev@sha256:c3bb73ee907480ab8e8fe567a5fd534b7a522bacd0df7ed20581c1f220e0d0f1 AS builder
 
 # This audited post-v2.11.4 snapshot contains the pending v2.11.5 fixes and
 # dependency upgrades. A full commit ID plus Go's checksum database makes the
